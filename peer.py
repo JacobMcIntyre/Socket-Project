@@ -4,6 +4,8 @@ import socket
 MANAGER_IP = "null"  # Treating as constants, set by args
 MANAGER_PORT = 0
 
+dht_slice = {}
+
 def main():
 
     # Check args
