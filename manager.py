@@ -38,81 +38,94 @@ def main():
         print("Error: Port number must be between 33000 and 33499")
         sys.exit(1)
     
-    sock.bind(("", PORT))
+    try:
+        sock.bind(("", PORT))
+    except OSError as e:
+        print(f"Error: Failed to bind to port {PORT}")
+        sys.exit(1)
+
+    print(f"Manager started on port {PORT} successfully. Waiting for messages...")
 
     # Main loop
-    while(True):
-        data, addr = sock.recvfrom(BUFFER_SIZE)
-        print(f"Received message from {addr}: {data.decode()}")
+    try:
+        while(True):
+            data, addr = sock.recvfrom(BUFFER_SIZE)
+            print(f"Received message from {addr}: {data.decode()}")
 
-        args = data.decode().split()
-        command = args[0]
+            args = data.decode().split()
+            command = args[0]
 
-        # call correct handler
-        match(command):
-            case "register":
-                if(listening_for != ListenerState.NONE):
-                    print(f"Error: Currently listening. Cannot process other commands until done.")
+            # call correct handler
+            match(command):
+                case "register":
+                    if(listening_for != ListenerState.NONE):
+                        print(f"Error: Currently listening. Cannot process other commands until done.")
+                        sock.sendto("FAILURE".encode(), addr)
+                    else:
+                        handle_register(args, addr)
+                case "setup-dht":
+                    if(listening_for != ListenerState.NONE):
+                        print(f"Error: Currently listening. Cannot process other commands until done.")
+                        sock.sendto("FAILURE".encode(), addr)
+                    else:
+                        handle_setup_dht(args, addr)
+                case "dht-complete":
+                    if(listening_for != ListenerState.DHT_COMPLETE):
+                        print(f"Error: Not listening for dht-complete. This command can only be processed after setup-dht.")
+                        sock.sendto("FAILURE".encode(), addr)
+                    else:
+                        handle_dht_complete(args, addr)
+                case "query-dht":
+                    if(listening_for != ListenerState.NONE):
+                        print(f"Error: Currently listening. Cannot process other commands until done.")
+                        sock.sendto("FAILURE".encode(), addr)
+                    else:
+                        handle_query_dht(args, addr)
+                case "leave-dht":
+                    if(listening_for != ListenerState.NONE):
+                        print(f"Error: Currently listening. Cannot process other commands until done.")
+                        sock.sendto("FAILURE".encode(), addr)
+                    else:
+                        handle_leave_dht(args, addr)
+                case "join-dht":
+                    if(listening_for != ListenerState.NONE):
+                        print(f"Error: Currently listening. Cannot process other commands until done.")
+                        sock.sendto("FAILURE".encode(), addr)
+                    else:
+                        handle_join_dht(args, addr)
+                case "dht-rebuilt":
+                    if(listening_for != ListenerState.DHT_REBUILT):
+                        print(f"Error: Not listening for dht-rebuilt. This command can only be processed after leave or join dht.")
+                        sock.sendto("FAILURE".encode(), addr)
+                    else:
+                        handle_dht_rebuilt(args, addr)
+                case "deregister":
+                    if(listening_for != ListenerState.NONE):
+                        print(f"Error: Currently listening. Cannot process other commands until done.")
+                        sock.sendto("FAILURE".encode(), addr)
+                    else:
+                        handle_deregister(args, addr)
+                case "teardown-dht":
+                    if(listening_for != ListenerState.NONE):
+                        print(f"Error: Currently listening. Cannot process other commands until done.")
+                        sock.sendto("FAILURE".encode(), addr)
+                    else:
+                        handle_teardown_dht(args, addr)
+                case "teardown-complete":
+                    if(listening_for != ListenerState.TEARDOWN_COMPLETE):
+                        print(f"Error: Not listening for teardown-complete. This command can only be processed after teardown-dht.")
+                        sock.sendto("FAILURE".encode(), addr)
+                    else:
+                        handle_teardown_complete(args, addr)
+                case _:
+                    print(f"Error: Unknown command: {command}")
                     sock.sendto("FAILURE".encode(), addr)
-                else:
-                    handle_register(args, addr)
-            case "setup-dht":
-                if(listening_for != ListenerState.NONE):
-                    print(f"Error: Currently listening. Cannot process other commands until done.")
-                    sock.sendto("FAILURE".encode(), addr)
-                else:
-                    handle_setup_dht(args, addr)
-            case "dht-complete":
-                if(listening_for != ListenerState.DHT_COMPLETE):
-                    print(f"Error: Not listening for dht-complete. This command can only be processed after setup-dht.")
-                    sock.sendto("FAILURE".encode(), addr)
-                else:
-                    handle_dht_complete(args, addr)
-            case "query-dht":
-                if(listening_for != ListenerState.NONE):
-                    print(f"Error: Currently listening. Cannot process other commands until done.")
-                    sock.sendto("FAILURE".encode(), addr)
-                else:
-                    handle_query_dht(args, addr)
-            case "leave-dht":
-                if(listening_for != ListenerState.NONE):
-                    print(f"Error: Currently listening. Cannot process other commands until done.")
-                    sock.sendto("FAILURE".encode(), addr)
-                else:
-                    handle_leave_dht(args, addr)
-            case "join-dht":
-                if(listening_for != ListenerState.NONE):
-                    print(f"Error: Currently listening. Cannot process other commands until done.")
-                    sock.sendto("FAILURE".encode(), addr)
-                else:
-                    handle_join_dht(args, addr)
-            case "dht-rebuilt":
-                if(listening_for != ListenerState.DHT_REBUILT):
-                    print(f"Error: Not listening for dht-rebuilt. This command can only be processed after leave or join dht.")
-                    sock.sendto("FAILURE".encode(), addr)
-                else:
-                    handle_dht_rebuilt(args, addr)
-            case "deregister":
-                if(listening_for != ListenerState.NONE):
-                    print(f"Error: Currently listening. Cannot process other commands until done.")
-                    sock.sendto("FAILURE".encode(), addr)
-                else:
-                    handle_deregister(args, addr)
-            case "teardown-dht":
-                if(listening_for != ListenerState.NONE):
-                    print(f"Error: Currently listening. Cannot process other commands until done.")
-                    sock.sendto("FAILURE".encode(), addr)
-                else:
-                    handle_teardown_dht(args, addr)
-            case "teardown-complete":
-                if(listening_for != ListenerState.TEARDOWN_COMPLETE):
-                    print(f"Error: Not listening for teardown-complete. This command can only be processed after teardown-dht.")
-                    sock.sendto("FAILURE".encode(), addr)
-                else:
-                    handle_teardown_complete(args, addr)
-            case _:
-                print(f"Error: Unknown command: {command}")
-                sock.sendto("FAILURE".encode(), addr)
+    except KeyboardInterrupt:
+        print("Manager shutting down.")
+        sock.close()
+        exit(0)
+
+
 
 def handle_register(args, addr):
     # Validate args
@@ -131,7 +144,7 @@ def handle_register(args, addr):
         sock.sendto("FAILURE".encode(), addr)
         return
     
-    if(any(peer["ip"] == args[2] and peer["m-port"] in (args[3], args[4]) or peer["p-port"] in (args[3], args[4]) for peer in peers.values())): # if ip matches, ports must be new
+    if(any(peer["ip"] == args[2] and (peer["m-port"] in (args[3], args[4]) or peer["p-port"] in (args[3], args[4])) for peer in peers.values())): # if ip matches, ports must be new
         print(f"Error: for given IP, at least one port already registered: {args[3]} and {args[4]}")
         sock.sendto("FAILURE".encode(), addr)
         return
@@ -155,12 +168,12 @@ def handle_setup_dht(args, addr):
         sock.sendto("FAILURE".encode(), addr)
         return
     
-    if args[2] < 3:
+    if int(args[2]) < 3:
         print(f"Error: N must be at least 3: {args[2]}")
         sock.sendto("FAILURE".encode(), addr)
         return
     
-    if(len(peers) < args[2]):
+    if(len(peers) < int(args[2])):
         print(f"Error: Not enough registered peers to set up DHT. Registered peers: {len(peers)}, N: {args[2]}")
         sock.sendto("FAILURE".encode(), addr)
         return
@@ -174,7 +187,11 @@ def handle_setup_dht(args, addr):
 
     # Choose peers and format message
     free_peers = [peer for peer in peers if peers[peer]["state"] == PeerState.FREE]
-    chosen_peers = random.sample(free_peers, args[2] - 1)
+    chosen_peers = random.sample(free_peers, int(args[2]) - 1)
+
+    for peer in chosen_peers:
+        peers[peer]["state"] = PeerState.INDHT
+
     chosen_peers_str = " ".join(f"{p} {peers[p]['ip']} {peers[p]['p-port']}" for p in chosen_peers)
     message = f"SUCCESS {args[1]} {peers[args[1]]['ip']} {peers[args[1]]['p-port']} {chosen_peers_str}" 
 
@@ -294,7 +311,7 @@ def handle_join_dht(args, addr):
     listening_for = ListenerState.DHT_REBUILT
     peer_leaving_or_joining = args[1]
 
-    leader = next(peer for peer in peers if peers[peer]["state"] in (PeerState.LEADER))
+    leader = next(peer for peer in peers if peers[peer]["state"] == PeerState.LEADER)
     print(f"Peer {args[1]} is joining DHT. Waiting for DHT to be rebuilt.")
     sock.sendto(f"SUCCESS {leader} {peers[leader]['ip']} {peers[leader]['p-port']}".encode(), addr)
 
@@ -392,7 +409,7 @@ def handle_teardown_dht(args, addr):
     sock.sendto("SUCCESS".encode(), addr)
 
 def handle_teardown_complete(args, addr):
-    global dht_exists
+    global dht_exists, listening_for
     # Validate args
     if len(args) != 2:
         print(f"Error: Invalid number of args. Usage: teardown-complete ⟨peer-name⟩")
@@ -411,6 +428,7 @@ def handle_teardown_complete(args, addr):
 
     # Complete DHT teardown
     dht_exists = False
+    listening_for = ListenerState.NONE
     for peer in peers:
         peers[peer]["state"] = PeerState.FREE
     print(f"DHT teardown complete.")
