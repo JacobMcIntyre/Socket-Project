@@ -25,6 +25,7 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # IPv4, UDP
 peers = {} # name -> ip, m-port, p-port, state
 
 def main():
+    global PORT
 
     # Check args
     if len(sys.argv) != 2:
@@ -141,6 +142,8 @@ def handle_register(args, addr):
     sock.sendto("SUCCESS".encode(), addr)
 
 def handle_setup_dht(args, addr):
+    global listening_for, dht_exists
+
     # Validate args
     if len(args) != 4:
         print(f"Error: Invalid number of args. Usage: setup-dht ⟨peer-name⟩ ⟨n⟩ ⟨YYYY⟩")
@@ -182,6 +185,8 @@ def handle_setup_dht(args, addr):
     sock.sendto(message.encode(), addr)
 
 def handle_dht_complete(args, addr):
+    global listening_for
+
     # Validate args
     if len(args) != 2:
         print(f"Error: Invalid number of args. Usage: dht-complete ⟨peer-name⟩")
@@ -232,6 +237,8 @@ def handle_query_dht(args, addr):
     sock.sendto(f"SUCCESS {random_peer} {peers[random_peer]['ip']} {peers[random_peer]['p-port']}".encode(), addr)
         
 def handle_leave_dht(args, addr):
+    global listening_for, peer_leaving_or_joining
+
     # Validate args
     if len(args) != 2:
         print(f"Error: Invalid number of args. Usage: leave-dht ⟨peer-name⟩")
@@ -260,6 +267,8 @@ def handle_leave_dht(args, addr):
     sock.sendto("SUCCESS".encode(), addr)
 
 def handle_join_dht(args, addr):
+    global listening_for, peer_leaving_or_joining
+
     # Validate args
     if len(args) != 2:
         print(f"Error: Invalid number of args. Usage: join-dht ⟨peer-name⟩")
@@ -284,10 +293,14 @@ def handle_join_dht(args, addr):
     # Join dht recorded
     listening_for = ListenerState.DHT_REBUILT
     peer_leaving_or_joining = args[1]
+
+    leader = next(peer for peer in peers if peers[peer]["state"] in (PeerState.LEADER))
     print(f"Peer {args[1]} is joining DHT. Waiting for DHT to be rebuilt.")
-    sock.sendto("SUCCESS".encode(), addr)
+    sock.sendto(f"SUCCESS {leader} {peers[leader]['ip']} {peers[leader]['p-port']}".encode(), addr)
 
 def handle_dht_rebuilt(args, addr):
+    global listening_for, peer_leaving_or_joining
+
     # Validate args
     if len(args) != 3:
         print(f"Error: Invalid number of args. Usage: dht-rebuilt ⟨peer-name⟩ ⟨new-leader⟩")
@@ -350,6 +363,8 @@ def handle_deregister(args, addr):
     sock.sendto("SUCCESS".encode(), addr)
 
 def handle_teardown_dht(args, addr):
+    global listening_for
+
     # Validate args
     if len(args) != 2:
         print(f"Error: Invalid number of args. Usage: teardown-dht ⟨peer-name⟩")
@@ -377,6 +392,7 @@ def handle_teardown_dht(args, addr):
     sock.sendto("SUCCESS".encode(), addr)
 
 def handle_teardown_complete(args, addr):
+    global dht_exists
     # Validate args
     if len(args) != 2:
         print(f"Error: Invalid number of args. Usage: teardown-complete ⟨peer-name⟩")
