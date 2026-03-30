@@ -3,9 +3,12 @@ import socket
 import random
 import threading
 import csv
+import time
+import os
  
 MANAGER_IP = "null"  # Treating as constants, set by args
 MANAGER_PORT = 0
+BUFFER_SIZE = 65535
 
 local_name = "null"
 ip = "null"
@@ -21,10 +24,11 @@ p_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 m_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 dht_slice = {} #event_id -> state, year, month_name, event_type, cz_type, cz_name, injuries_direct, injuries_indirect, deaths_direct, deaths_indirect, damage_property, damage_crops, tor_f_scale
 
-peers = {} # name -> ip, p-port, id
+peers = []
 next_peer = None
 
 def main():
+    global MANAGER_IP, MANAGER_PORT, local_name, ip, p_port, m_port
 
     # Check args
     if len(sys.argv) != 3:
@@ -39,10 +43,10 @@ def main():
         sys.exit(1)
 
 
-    m_port = set_port()
+    m_port = set_port("m")
     print(f"Manager socket assigned to port {m_port}")
 
-    p_port = set_port()
+    p_port = set_port("p")
     print(f"Peer socket assigned to port {p_port}")
 
     ip = socket.gethostbyname(socket.gethostname())
@@ -52,7 +56,9 @@ def main():
 
     m_sock.sendto(f"register {local_name} {ip} {m_port} {p_port}".encode(), (MANAGER_IP, MANAGER_PORT))
 
-    if(m_sock.recv(1024).decode() != "SUCCESS"):
+    data, addr = m_sock.recvfrom(BUFFER_SIZE)
+    response = data.decode()
+    if(response != "SUCCESS"):
         print("Error: Failed to register with manager")
         sys.exit(1)
 
@@ -65,6 +71,9 @@ def main():
 def commands_thread():
     while True:
         command = input("> ")
+
+        if not command.strip():
+            continue
 
         match command.split()[0]:
             case "setup-dht":
@@ -85,7 +94,7 @@ def commands_thread():
 
 def messages_thread():
     while True:
-        data, addr = p_sock.recvfrom(1024)
+        data, addr = p_sock.recvfrom(BUFFER_SIZE)
         args = data.decode().split()
 
         match args[0]:
@@ -93,6 +102,8 @@ def messages_thread():
                 set_id(args)
             case "store-slice":
                 store_slice(args)
+            case "find-event":
+                find_event(args)
             case "SUCCESS-query":
                 print(f"id-seq: {args[2]}")
                 fields = args[3].split(',')
@@ -106,18 +117,24 @@ def messages_thread():
             case "rebuild-dht":
                 rebuild_dht(args)
             case "teardown-dht":
-                teardown_dht(args)
+                teardown_dht_slice(args)
             
 
 # Helper functions
-def set_port():
+def set_port(sock_type):
     start = random.randint(33000, 33499)
     port = start
     while True:
 
         # Binds until it finds an open port
         try: 
-            p_sock.bind(("", port))
+            if(sock_type == "m"):
+                m_sock.bind(("", port))
+            elif(sock_type == "p"):
+                p_sock.bind(("", port))
+            else:
+                print(f"Error: Invalid socket type {sock_type}")
+                exit(1)
             return port
         except OSError:
             pass
@@ -143,19 +160,27 @@ def is_prime(num):
     return True
 
 def update_next_peer():
-    global peers, id, ring_size
+    global peers, id, ring_size, next_peer
 
-    next_peer = next(p for p in peers.values() if p["id"] == (id + 1) % ring_size) # Get next peer in ring
-    return next_peer
+    next_peer = next(p for p in peers if p["id"] == (id + 1) % ring_size) # Get next peer in ring
+
+def clean(val):
+    v = val.strip().replace(' ', '_')
+    return v if v else 'n/a'
 
 # Commands
 def setup_dht(command):
     global id, ring_size, next_peer, s, year
 
+    if(len(command.split()) != 4):
+        print("Error: Invalid setup-dht command format. Usage: setup-dht <name> <ring_size> <year>")
+        return
+
     year = int(command.split()[3])
 
     m_sock.sendto(command.encode(), (MANAGER_IP, MANAGER_PORT))
-    args = m_sock.recv(1024).decode().split()
+    data, addr = m_sock.recvfrom(BUFFER_SIZE)
+    args = data.decode().split()
 
     if args[0] != "SUCCESS":
         print("Error: Failed to set up DHT")
@@ -185,46 +210,49 @@ def setup_dht(command):
         entries = sum(1 for _ in f) - 1
 
     s = find_next_prime(entries * 2)
-    record_counts = {id: 0 for id in peers}
+    record_counts = {p['id']: 0 for p in peers}
 
     with open(filename, 'r') as f:
         reader = csv.DictReader(f)
         for row in reader:
             event_id = int(row['EVENT_ID'])
-            state = row['STATE']
-            year = row['YEAR']
-            month_name = row['MONTH_NAME']
-            event_type = row['EVENT_TYPE']
-            cz_type = row['CZ_TYPE']
-            cz_name = row['CZ_NAME']
-            injuries_direct = row['INJURIES_DIRECT']
-            injuries_indirect = row['INJURIES_INDIRECT']
-            deaths_direct = row['DEATHS_DIRECT']
-            deaths_indirect = row['DEATHS_INDIRECT']
-            damage_property = row['DAMAGE_PROPERTY']
-            damage_crops = row['DAMAGE_CROPS']
-            tor_f_scale = row['TOR_F_SCALE']
+            state = clean(row['STATE'])
+            row_year = clean(row['YEAR'])
+            month_name = clean(row['MONTH_NAME'])
+            event_type = clean(row['EVENT_TYPE'])
+            cz_type = clean(row['CZ_TYPE'])
+            cz_name = clean(row['CZ_NAME'])
+            injuries_direct = clean(row['INJURIES_DIRECT'])
+            injuries_indirect = clean(row['INJURIES_INDIRECT'])
+            deaths_direct = clean(row['DEATHS_DIRECT'])
+            deaths_indirect = clean(row['DEATHS_INDIRECT'])
+            damage_property = clean(row['DAMAGE_PROPERTY'])
+            damage_crops = clean(row['DAMAGE_CROPS'])
+            tor_f_scale = clean(row['TOR_F_SCALE'])
 
             pos = event_id % s
             peer_id = pos % ring_size
 
-            p_sock.sendto(f"store-slice {peer_id} {event_id} {state} {year} {month_name} {event_type} {cz_type} {cz_name} {injuries_direct} {injuries_indirect} {deaths_direct} {deaths_indirect} {damage_property} {damage_crops} {tor_f_scale} {s} {year}".encode(), (next_peer['ip'], int(next_peer['p_port'])))
+            time.sleep(0.001)
+            p_sock.sendto(f"store-slice {peer_id} {event_id} {state} {row_year} {month_name} {event_type} {cz_type} {cz_name} {injuries_direct} {injuries_indirect} {deaths_direct} {deaths_indirect} {damage_property} {damage_crops} {tor_f_scale} {s} {year}".encode(), (next_peer['ip'], int(next_peer['p_port'])))
             record_counts[peer_id] += 1
     
-    for id, count in record_counts.items():
-        print(f"Peer {id} ({peers[id]['name']}): {count} records")
+    for p in peers:
+        print(f"Peer {p['id']} ({p['name']}): {record_counts[p['id']]} records")
             
     m_sock.sendto(f"dht-complete {local_name}".encode(), (MANAGER_IP, MANAGER_PORT))
 
 def query_dht(command):
     m_sock.sendto(f"query-dht {local_name}".encode(), (MANAGER_IP, MANAGER_PORT))
-    args = m_sock.recvfrom(1024).decode().split()
+    data, addr = m_sock.recvfrom(BUFFER_SIZE)
+    args = data.decode().split()
 
-    p_sock.sendto(f"find-event {command.split()[1]} {local_name} {ip} {p_port}".encode(), (args[2], int(args[3])))
+    p_sock.sendto(f"find-event {command.split()[1]} {local_name} {ip} {p_port} none".encode(), (args[2], int(args[3])))
 
 def leave_dht(command):
     m_sock.sendto(f"leave-dht {local_name}".encode(), (MANAGER_IP, MANAGER_PORT))
-    response = m_sock.recv(1024).decode()
+    data, addr = m_sock.recvfrom(BUFFER_SIZE)
+    response = data.decode()
     if(response != "SUCCESS"):
         print("Error: Failed to leave DHT")
         return
@@ -235,7 +263,8 @@ def leave_dht(command):
 
 def join_dht(command):
     m_sock.sendto(f"join-dht {local_name}".encode(), (MANAGER_IP, MANAGER_PORT))
-    response = m_sock.recv(1024).decode()
+    data, addr = m_sock.recvfrom(BUFFER_SIZE)
+    response = data.decode()
     if(response.split()[0] != "SUCCESS"):
         print("Error: Failed to join DHT")
         return
@@ -243,14 +272,16 @@ def join_dht(command):
     p_sock.sendto(f"rebuild-dht {local_name} joining {ip} {p_port}".encode(), (response.split()[2], int(response.split()[3])))
     m_sock.sendto(f"dht-rebuilt {local_name} {response.split()[1]}".encode(), (MANAGER_IP, MANAGER_PORT))
 
-    response = m_sock.recv(1024).decode()
+    data, addr = m_sock.recvfrom(BUFFER_SIZE)
+    response = data.decode()
     if(response != "SUCCESS"):
         print("Error: Manager failed to acknowledge DHT rebuild")
         return
 
 def teardown_dht(command):
     m_sock.sendto(f"teardown-dht {local_name}".encode(), (MANAGER_IP, MANAGER_PORT))
-    response = m_sock.recv(1024).decode()
+    data, addr = m_sock.recvfrom(BUFFER_SIZE)
+    response = data.decode()
     if(response != "SUCCESS"):
         print("Error: Failed to tear down DHT")
         return
@@ -259,13 +290,54 @@ def teardown_dht(command):
 
 def deregister(command):
     m_sock.sendto(f"deregister {local_name}".encode(), (MANAGER_IP, MANAGER_PORT))
-    response = m_sock.recv(1024).decode()
+    data, addr = m_sock.recvfrom(BUFFER_SIZE)
+    response = data.decode()
     if(response != "SUCCESS"):
         print("Error: Failed to deregister with manager")
-        exit(1)
+        os._exit(1)
     else:
         print("Deregistered with manager successfully")
-        exit(0)
+        os._exit(0)
+
+def send_dht_data():
+    global s, year
+    # Construct new DHT
+    filename = f"details-{year}.csv"
+
+    with open(filename, 'r') as f:
+        entries = sum(1 for _ in f) - 1
+
+    s = find_next_prime(entries * 2)
+    record_counts = {p['id']: 0 for p in peers}
+
+
+    with open(filename, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            event_id = int(row['EVENT_ID'])
+            state = clean(row['STATE'])
+            row_year = clean(row['YEAR'])
+            month_name = clean(row['MONTH_NAME'])
+            event_type = clean(row['EVENT_TYPE'])
+            cz_type = clean(row['CZ_TYPE'])
+            cz_name = clean(row['CZ_NAME'])
+            injuries_direct = clean(row['INJURIES_DIRECT'])
+            injuries_indirect = clean(row['INJURIES_INDIRECT'])
+            deaths_direct = clean(row['DEATHS_DIRECT'])
+            deaths_indirect = clean(row['DEATHS_INDIRECT'])
+            damage_property = clean(row['DAMAGE_PROPERTY'])
+            damage_crops = clean(row['DAMAGE_CROPS'])
+            tor_f_scale = clean(row['TOR_F_SCALE'])
+
+            pos = event_id % s
+            peer_id = pos % ring_size
+
+            time.sleep(0.001)
+            p_sock.sendto(f"store-slice {peer_id} {event_id} {state} {row_year} {month_name} {event_type} {cz_type} {cz_name} {injuries_direct} {injuries_indirect} {deaths_direct} {deaths_indirect} {damage_property} {damage_crops} {tor_f_scale} {s} {year}".encode(), (next_peer['ip'], int(next_peer['p_port'])))
+            record_counts[peer_id] += 1
+
+    for p in peers:
+        print(f"Peer {p['id']} ({p['name']}): {record_counts[p['id']]} records")
 
 # Message handlers
 
@@ -279,19 +351,22 @@ def set_id(args):
 
     ring_size = int(args[2])
     for i in range(ring_size):
-        offset = 1 + i*3
+        offset = 3 + i*3
         peers.append({'name': args[offset], 'ip': args[offset + 1], 'p_port': args[offset + 2], 'id': i})
         print(f"Peer {args[offset]} selected for DHT")
     
     update_next_peer()
 
 def store_slice(args):
-    global s
+    global s, year
 
-    if(args[1] != id):
+    if(int(args[1]) != id):
+        print(f"Args length: {len(args)}")
         print(f"Received store-slice for id {args[1]}, but my id is {id}. Passing message to next peer.")
         p_sock.sendto(' '.join(args).encode(), (next_peer['ip'], int(next_peer['p_port'])))
     else:
+        s = int(args[16])
+        year = int(args[17])
         dht_slice[int(args[2]) % s] = {
                 'state': args[3],
                 'year': args[4],
@@ -307,8 +382,6 @@ def store_slice(args):
                 'damage_crops': args[14],
                 'tor_f_scale': args[15]
             }
-        s = int(args[16])
-        year = int(args[17])
         print(f"Stored slice for event_id {args[2]}")
         
 def find_event(args):
@@ -325,9 +398,23 @@ def find_event(args):
             record = dht_slice[pos]
             record_str = ','.join(f"{k}:{v}" for k, v in record.items())
 
-            p_sock.sendto(f"SUCCESS-query {args[1]} {record_str}".encode(), (args[3], int(args[4])))
+            if(args[5] == "none"):
+                id_seq = f"{id}"
+            else:
+                id_seq = f"{args[5]}->{id}"
+            
+            args[5] = id_seq
+
+            p_sock.sendto(f"SUCCESS-query {args[1]} {id_seq} {record_str}".encode(), (args[3], int(args[4])))
     else:
         print(f"Received find-event for event_id {args[1]}, but it belongs to peer {peer_id}. Passing message to next peer.")
+
+        if(args[5] == "none"):
+            id_seq = f"{id}"
+        else:
+            id_seq = f"{args[5]}->{id}"
+        
+        args[5] = id_seq
         p_sock.sendto(' '.join(args).encode(), (next_peer['ip'], int(next_peer['p_port'])))
 
 def reset_id(args):
@@ -337,19 +424,22 @@ def reset_id(args):
         # Gone back to original propigation
         p_sock.sendto(f"rebuild-dht {local_name} leaving".encode(), (next_peer['ip'], int(next_peer['p_port'])))
         m_sock.sendto(f"dht-rebuilt {local_name} {next_peer['name']}".encode(), (MANAGER_IP, MANAGER_PORT))
-        response = m_sock.recv(1024).decode()
+        data, addr = m_sock.recvfrom(BUFFER_SIZE)
+        response = data.decode()
         if(response != "SUCCESS"):
             print("Error: Manager failed to acknowledge DHT rebuild")
     else:
 
-        p_sock.sendto(f"reset-id {(args[1] + 1)}".encode(), (next_peer['ip'], int(next_peer['p_port'])))
+        p_sock.sendto(f"reset-id {(int(args[1]) + 1)}".encode(), (next_peer['ip'], int(next_peer['p_port'])))
 
         id = int(args[1])
         ring_size = ring_size - 1
         print(f"Reset ID to {id} and updated ring size to {ring_size}")
 
 def rebuild_dht(args):
-    global ring_size, peers
+    global ring_size, peers, next_peer, s, year, id
+
+    id = 0
 
     if(args[2] == "leaving"):
         remaining = [p for p in peers if p['name'] != args[1]]
@@ -372,55 +462,24 @@ def rebuild_dht(args):
     peer_str = ' '.join(f"{p['name']} {p['ip']} {p['p_port']}" for p in peers)
     for p in peers:
         if(p['name'] != local_name):
-            p_sock.sendto(f"set-id {p['id']} {peer_str}".encode(), (p['ip'], int(p['p_port'])))
+            p_sock.sendto(f"set-id {p['id']} {len(peers)} {peer_str}".encode(), (p['ip'], int(p['p_port'])))
 
     update_next_peer()
 
     ring_size = len(peers)
 
-    # Construct new DHT
-    filename = f"details-{year}.csv"
-
-    with open(filename, 'r') as f:
-        entries = sum(1 for _ in f) - 1
-
-    s = find_next_prime(entries * 2)
-    record_counts = {id: 0 for id in peers}
-
-    with open(filename, 'r') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            event_id = int(row['EVENT_ID'])
-            state = row['STATE']
-            year = row['YEAR']
-            month_name = row['MONTH_NAME']
-            event_type = row['EVENT_TYPE']
-            cz_type = row['CZ_TYPE']
-            cz_name = row['CZ_NAME']
-            injuries_direct = row['INJURIES_DIRECT']
-            injuries_indirect = row['INJURIES_INDIRECT']
-            deaths_direct = row['DEATHS_DIRECT']
-            deaths_indirect = row['DEATHS_INDIRECT']
-            damage_property = row['DAMAGE_PROPERTY']
-            damage_crops = row['DAMAGE_CROPS']
-            tor_f_scale = row['TOR_F_SCALE']
-
-            pos = event_id % s
-            peer_id = pos % ring_size
-
-            p_sock.sendto(f"store-slice {peer_id} {event_id} {state} {year} {month_name} {event_type} {cz_type} {cz_name} {injuries_direct} {injuries_indirect} {deaths_direct} {deaths_indirect} {damage_property} {damage_crops} {tor_f_scale} {s} {year}".encode(), (next_peer['ip'], int(next_peer['p_port'])))
-            record_counts[peer_id] += 1
+    threading.Thread(target=send_dht_data, daemon=True).start()
     
-    for id, count in record_counts.items():
-        print(f"Peer {id} ({peers[id]['name']}): {count} records")
+    
 
-def teardown_dht(args):
+def teardown_dht_slice(args):
     if(id == 0): #Leader
         dht_slice.clear()
         print("Tore down DHT and cleared local slice")
 
-        m_sock.sendto(f"teardown-complete {local_name}".encode(), (next_peer['ip'], int(next_peer['p_port'])))
-        response = m_sock.recv(1024).decode()
+        m_sock.sendto(f"teardown-complete {local_name}".encode(), (MANAGER_IP, MANAGER_PORT))
+        data, addr = m_sock.recvfrom(BUFFER_SIZE)
+        response = data.decode()
 
         if(response != "SUCCESS"):
             print("Error: Failed to receive teardown complete acknowledgement from manager")
